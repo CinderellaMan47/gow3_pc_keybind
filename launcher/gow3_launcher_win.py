@@ -313,7 +313,7 @@ APP_DEFAULTS = {'ui_language': 'en', 'game_dir': os.environ.get('GOW3_GAME_DIR',
                 'gpu_id': '', 'background_warmup': True, 'parallel_warmup': True, 'pipeline_binary_cache': True,
                 'perf_diag': False, 'frame_capture_key': False, 'frame_stats': False, 'gpu_profile': False,
                 'vk_validation': False, 'close_on_play': False, 'discord_rpc': False,
-                'check_updates': False, 'game_patches': {}, 'controls': {}, 'pad_style': 'playstation',
+                'check_updates': False, 'game_patches': {}, 'controls': {}, 'stick_keys': {}, 'pad_style': 'playstation',
                 'glyph_style': 'off'}
 
 # PS4 button, default key, default gamepad button (SDL names; src/runtime_pad.c). L2/R2 come
@@ -353,6 +353,20 @@ def control_changes(values, kind):
     return {row[0]: values[row[0]].strip() for row in CONTROLS
             if row[column] and values.get(row[0], '').strip()
             and values[row[0]].strip().casefold() != row[column].casefold()}
+
+
+STICK_CONTROLS = [('ls_up', 'Left stick up', 'W'), ('ls_down', 'Left stick down', 'S'),
+                  ('ls_left', 'Left stick left', 'A'), ('ls_right', 'Left stick right', 'D'),
+                  ('rs_up', 'Right stick up', 'Up'), ('rs_down', 'Right stick down', 'Down'),
+                  ('rs_left', 'Right stick left', 'Left'), ('rs_right', 'Right stick right', 'Right')]
+
+
+def stick_key_map(sticks):
+    """GOW3_STICK_KEYS value: 'ls_up=Up,ls_left=Left' for the saved stick keys."""
+    chosen = sticks if isinstance(sticks, dict) else {}
+    return ','.join(f'{name}={chosen[name].strip()}' for name, _label, _default in STICK_CONTROLS
+                    if isinstance(chosen.get(name), str) and chosen[name].strip()
+                    and not set(chosen[name]) & set(',='))
 
 
 def control_values(controls, kind):
@@ -762,6 +776,9 @@ def game_environment(s):
     for kind, name in (('key', 'GOW3_KEY_MAP'), ('pad', 'GOW3_PAD_MAP')):
         if value := control_map(s.get('controls', {}), kind):
             env[name] = value
+    env.pop('GOW3_STICK_KEYS', None)
+    if value := stick_key_map(s.get('stick_keys', {})):
+        env['GOW3_STICK_KEYS'] = value
     glyph_style = s.get('glyph_style')
     env.pop('GOW3_GLYPH_STYLE', None)
     if glyph_style in ('auto', 'xbox', 'nintendo'):
@@ -1482,6 +1499,18 @@ class Launcher:
                 box = ttk.Label(table, text=fixed, style='Muted.TLabel')
             box.grid(row=r, column=4, sticky='w')
             self.draw_pad_icon(button)
+        sticks = ttk.Frame(f)
+        sticks.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(16, 0))
+        ttk.Label(sticks, text=heading_text(_('STICKS (KEYBOARD)')), style='Section.TLabel').grid(
+            row=0, column=0, columnspan=2, sticky='w')
+        saved_sticks = self.app.get('stick_keys')
+        saved_sticks = saved_sticks if isinstance(saved_sticks, dict) else {}
+        self.stick_vars = {}
+        for r, (stick_name, stick_label, stick_default) in enumerate(STICK_CONTROLS, start=1):
+            ttk.Label(sticks, text=stick_label, width=18).grid(row=r, column=0, sticky='w', padx=(0, 12), pady=3)
+            stick_var = tk.StringVar(value=saved_sticks.get(stick_name) or stick_default)
+            self.stick_vars[stick_name] = stick_var
+            ttk.Entry(sticks, textvariable=stick_var, width=16).grid(row=r, column=1, sticky='w')
         self.note(f, _('Keys use SDL names: letters, digits, Space, Return, Tab, Left Shift, Left Ctrl, Left Alt, '
                        'Backspace, Up, Down, Left, Right, F1 to F12. A name the game does not know keeps the default '
                        '(the log says which). L2/R2 on the gamepad stay on the triggers. Touchpad right opens the '
@@ -1512,6 +1541,8 @@ class Launcher:
         for button, key, pad in CONTROLS:
             self.control_vars['key'][button].set(key)
             self.control_vars['pad'][button].set(pad or '')
+        for stick_name, _label, stick_default in STICK_CONTROLS:
+            self.stick_vars[stick_name].set(stick_default)
         self.relabel_pad_controls()
 
     def build_linux_options(self, f):
@@ -1781,6 +1812,11 @@ class Launcher:
                 app[key] = value
         app['controls'] = {kind: control_changes({b: v.get() for b, v in vars_.items()}, kind)
                            for kind, vars_ in self.control_vars.items()}
+        app['stick_keys'] = {}
+        for stick_name, _label, stick_default in STICK_CONTROLS:
+            stick_value = self.stick_vars[stick_name].get().strip()
+            if stick_value and stick_value != stick_default:
+                app['stick_keys'][stick_name] = stick_value
         app['pad_style'] = self.pad_style.get()
         mods = {'order': list(self.mod_order),
                 'disabled': [n for n, v in self.mod_vars.items() if not v.get()]} if self.mod_order else None

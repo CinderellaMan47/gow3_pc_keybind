@@ -196,12 +196,56 @@ static int apply_button_map(ButtonMap *map, const char *spec, bool keyboard) {
     return used;
 }
 
+/* Stick keys: W/A/S/D move the left stick and the arrows the right one. GOW3_STICK_KEYS changes
+ * them: comma-separated <stick direction>=<SDL key name>, e.g. "ls_up=Up,ls_left=Left,rs_up=Keypad 8"
+ * with ls_/rs_ for the left/right stick and up/down/left/right. */
+enum { STICK_LS_UP, STICK_LS_DOWN, STICK_LS_LEFT, STICK_LS_RIGHT,
+       STICK_RS_UP, STICK_RS_DOWN, STICK_RS_LEFT, STICK_RS_RIGHT, STICK_KEY_COUNT };
+static const char *const stick_key_names[STICK_KEY_COUNT]={
+    "ls_up","ls_down","ls_left","ls_right","rs_up","rs_down","rs_left","rs_right"};
+static int stick_keys[STICK_KEY_COUNT]={
+    SDL_SCANCODE_W,SDL_SCANCODE_S,SDL_SCANCODE_A,SDL_SCANCODE_D,
+    SDL_SCANCODE_UP,SDL_SCANCODE_DOWN,SDL_SCANCODE_LEFT,SDL_SCANCODE_RIGHT};
+
+static int apply_stick_keys(const char *spec) {
+    if (!spec || !*spec) return 0;
+    char copy[512];
+    snprintf(copy,sizeof(copy),"%s",spec);
+    int used=0;
+    char *entry=copy;
+    while (entry) {
+        char *next=strchr(entry,',');
+        if (next) *next++=0;
+        char *eq=strchr(entry,'=');
+        if (!eq) {
+            if (*trim(entry)) printf("Runtime: stick keys: ignored '%s' (expected direction=key)\n",trim(entry));
+            entry=next;
+            continue;
+        }
+        *eq=0;
+        const char *stick=trim(entry), *name=trim(eq+1);
+        entry=next;
+        int index=-1;
+        for (int i=0;i<STICK_KEY_COUNT;++i) if (!SDL_strcasecmp(stick,stick_key_names[i])) index=i;
+        const int source=*name ? (int)SDL_GetScancodeFromName(name) : (int)SDL_SCANCODE_UNKNOWN;
+        if (index<0 || source<=(int)SDL_SCANCODE_UNKNOWN) {
+            printf("Runtime: stick keys: ignored '%s=%s'\n",stick,name);
+            continue;
+        }
+        stick_keys[index]=source;
+        ++used;
+    }
+    return used;
+}
+
 static void load_button_maps(void) {
     static bool loaded;
     if (loaded) return;
     loaded=true;
     const int pad=apply_button_map(&pad_map,getenv("GOW3_PAD_MAP"),false);
     const int keys=apply_button_map(&key_map,getenv("GOW3_KEY_MAP"),true);
+    const int sticks=apply_stick_keys(getenv("GOW3_STICK_KEYS"));
+    if (sticks) printf("Runtime: stick keys: %d remapped\n",sticks);
     if (pad || keys) printf("Runtime: pad map: %d gamepad and %d keyboard buttons remapped\n",pad,keys);
 }
 
@@ -247,10 +291,10 @@ static void sample_host(PadData *d) {
     for (size_t i=0;i<key_map.count;++i) if (k[key_map.entries[i].source]) d->buttons|=key_map.entries[i].ps;
     if (d->buttons & BTN_L2) d->l2=255;
     if (d->buttons & BTN_R2) d->r2=255;
-    key_axis(&d->left_x,k[SDL_SCANCODE_A],k[SDL_SCANCODE_D]);
-    key_axis(&d->left_y,k[SDL_SCANCODE_W],k[SDL_SCANCODE_S]);
-    key_axis(&d->right_x,k[SDL_SCANCODE_LEFT],k[SDL_SCANCODE_RIGHT]);
-    key_axis(&d->right_y,k[SDL_SCANCODE_UP],k[SDL_SCANCODE_DOWN]);
+    key_axis(&d->left_x,k[stick_keys[STICK_LS_LEFT]],k[stick_keys[STICK_LS_RIGHT]]);
+    key_axis(&d->left_y,k[stick_keys[STICK_LS_UP]],k[stick_keys[STICK_LS_DOWN]]);
+    key_axis(&d->right_x,k[stick_keys[STICK_RS_LEFT]],k[stick_keys[STICK_RS_RIGHT]]);
+    key_axis(&d->right_y,k[stick_keys[STICK_RS_UP]],k[stick_keys[STICK_RS_DOWN]]);
 }
 
 /* GOW3_PAD_FILE=<file>: scripted input for automated runs. The file holds whitespace-separated
